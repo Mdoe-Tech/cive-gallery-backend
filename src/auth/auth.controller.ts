@@ -6,7 +6,7 @@ import {
   UseGuards,
   Req,
   Patch,
-  Logger,
+  Logger, Res,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -17,6 +17,8 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { JwtAuthGuard } from './wt-auth.guard';
 import { User } from './entities/user.entity';
+import * as express from 'express';
+
 
 interface GoogleUser {
   email: string;
@@ -81,14 +83,29 @@ export class AuthController {
 
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
-  async googleAuthRedirect(@Req() req: Request & { user: GoogleUser }) {
+  async googleAuthRedirect(
+    @Req() req: express.Request & { user: GoogleUser },
+    @Res() res: express.Response,
+  ) {
     this.logger.log(`Handling Google callback for email: ${req.user.email}`);
-    const user = await this.authService.findOrCreateGoogleUser(req.user.email);
-    const result = this.authService.googleLogin(user);
-    return {
-      message: 'Google login successful',
-      data: result,
-    };
+    try {
+      const user = await this.authService.findOrCreateGoogleUser(req.user.email);
+      const result = this.authService.googleLogin(user); // { access_token: string }
+
+      // --- REDIRECT BACK TO FRONTEND ---
+      const frontendCallbackUrl = process.env.FRONTEND_GOOGLE_CALLBACK_URL || 'http://localhost:3000/auth/google/callback';
+      const redirectUrl = `${frontendCallbackUrl}?token=${result.access_token}`;
+
+      this.logger.log(`Redirecting to frontend: ${redirectUrl}`);
+      res.redirect(redirectUrl); // Perform the redirect
+      // No 'return' statement needed after res.redirect()
+
+    } catch (error) {
+      this.logger.error(`Error during Google callback processing: ${error.message}`, error.stack);
+      // Redirect to an error page on the frontend or login page
+      const frontendErrorUrl = process.env.FRONTEND_LOGIN_URL || 'http://localhost:3000/login';
+      res.redirect(`${frontendErrorUrl}?error=google_auth_failed`);
+    }
   }
 
   @Patch('profile')

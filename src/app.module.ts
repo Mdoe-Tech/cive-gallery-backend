@@ -10,7 +10,6 @@ import { UpdatesModule } from './updates/updates.module';
 import { EventsModule } from './events/events.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { SearchModule } from './search/search.module';
-import { SharingModule } from './sharing/sharing.module';
 import { AdminModule } from './admin/admin.module';
 import { AccessibilityModule } from './accessibility/accessibility.module';
 import { CommonModule } from './common/common.module';
@@ -20,6 +19,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: '.env',
     }),
     CacheModule.registerAsync({
       isGlobal: true,
@@ -27,23 +27,30 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
         store: redisStore,
-        url: configService.get('REDIS_URL', 'redis://localhost:6379'),
-        ttl: configService.get('CACHE_TTL', 300) * 1000,
-        max: configService.get('CACHE_MAX_ITEMS', 100),
+        url: configService.get<string>('REDIS_URL', 'redis://localhost:6379'),
+        ttl: configService.get<number>('CACHE_TTL', 300) * 1000, // Convert seconds to ms
+        max: configService.get<number>('CACHE_MAX_ITEMS', 100),
         socket: {
-          reconnectStrategy: (retries) => Math.min(retries * 50, 1000),
+          // Optional: Add socket options if needed
+          reconnectStrategy: (retries: number) => Math.min(retries * 50, 1000),
         },
       }),
     }),
-    TypeOrmModule.forRoot({
-      type: 'postgres',
-      host: 'localhost',
-      port: 5432,
-      username: 'postgres',
-      password: '@Issaally99',
-      database: 'cive_gallery',
-      entities: [__dirname + '/**/*.entity{.ts,.js}'],
-      synchronize: true,
+    // Use TypeOrmModule.forRootAsync
+    TypeOrmModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => ({
+        type: 'postgres',
+        host: configService.get<string>('DB_HOST', 'localhost'),
+        port: configService.get<number>('DB_PORT', 5432),
+        username: configService.get<string>('DB_USERNAME'),
+        password: configService.get<string>('DB_PASSWORD'),
+        database: configService.get<string>('DB_NAME'),
+        entities: [__dirname + '/**/*.entity{.ts,.js}'],
+        synchronize: configService.get<string>('NODE_ENV') === 'development',
+        logging: configService.get<string>('NODE_ENV') === 'development',
+      }),
     }),
     AuthModule,
     GalleryModule,
@@ -51,7 +58,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
     EventsModule,
     NotificationsModule,
     SearchModule,
-    SharingModule,
     AdminModule,
     AccessibilityModule,
     CommonModule,
