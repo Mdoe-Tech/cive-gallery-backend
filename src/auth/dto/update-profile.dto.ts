@@ -2,11 +2,6 @@ import { IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdateProfileDto {
   @IsOptional()
-  @IsString({ message: 'Avatar must be a string' })
-  @MaxLength(255, { message: 'Avatar URL must be at most 255 characters' })
-  avatar?: string;
-
-  @IsOptional()
   @IsString({ message: 'Bio must be a string' })
   @MaxLength(500, { message: 'Bio must be at most 500 characters' })
   bio?: string;

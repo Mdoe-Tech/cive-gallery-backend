@@ -14,6 +14,7 @@ import { AdminModule } from './admin/admin.module';
 import { AccessibilityModule } from './accessibility/accessibility.module';
 import { CommonModule } from './common/common.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
     AdminModule,
     AccessibilityModule,
     CommonModule,
+    UsersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

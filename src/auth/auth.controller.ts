@@ -1,12 +1,17 @@
 import {
-  Controller,
-  Post,
+  BadRequestException,
   Body,
-  Get,
-  UseGuards,
-  Req,
+  Controller, Delete,
+  Get, HttpCode, HttpStatus,
+  Logger,
   Patch,
-  Logger, Res,
+  Post,
+  Req,
+  Res,
+  UnauthorizedException,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -18,7 +23,17 @@ import { AuthGuard } from '@nestjs/passport';
 import { JwtAuthGuard } from './wt-auth.guard';
 import { User } from './entities/user.entity';
 import * as express from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { extname } from 'path';
+import { diskStorage } from 'multer';
+import { ApiResponse } from '../common/interfaces/api-response.interface';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { DeleteAccountDto } from './dto/delete-account.dto';
 
+
+interface RequestWithUser extends express.Request {
+  user?: User;
+}
 
 interface GoogleUser {
   email: string;
@@ -90,7 +105,7 @@ export class AuthController {
     this.logger.log(`Handling Google callback for email: ${req.user.email}`);
     try {
       const user = await this.authService.findOrCreateGoogleUser(req.user.email);
-      const result = this.authService.googleLogin(user); // { access_token: string }
+      const result = this.authService.googleLogin(user);
 
       // --- REDIRECT BACK TO FRONTEND ---
       const frontendCallbackUrl = process.env.FRONTEND_GOOGLE_CALLBACK_URL || 'http://localhost:3000/auth/google/callback';
@@ -98,7 +113,6 @@ export class AuthController {
 
       this.logger.log(`Redirecting to frontend: ${redirectUrl}`);
       res.redirect(redirectUrl); // Perform the redirect
-      // No 'return' statement needed after res.redirect()
 
     } catch (error) {
       this.logger.error(`Error during Google callback processing: ${error.message}`, error.stack);
@@ -109,25 +123,56 @@ export class AuthController {
   }
 
   @Patch('profile')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard) // This guard attaches req.user
+  @UseInterceptors(FileInterceptor('avatar', {
+    storage: diskStorage({
+      destination: './uploads/avatars',
+      filename: (req: RequestWithUser, file, cb) => {
+        // Now TypeScript knows req.user might exist and has the User structure
+        const userId = req.user?.id || 'unknown-user';
+        const uniqueSuffix = Date.now();
+        const ext = extname(file.originalname);
+        const filename = `user-${userId}-${uniqueSuffix}${ext}`;
+        cb(null, filename);
+      },
+    }),
+    fileFilter: (req, file, cb) => { // req type isn't strictly needed here, but keep consistent if desired
+      if (!file.mimetype.match(/\/(jpg|jpeg|png|gif|webp)$/)) {
+        return cb(new BadRequestException('Only image files (JPG, PNG, GIF, WEBP) are allowed!'), false);
+      }
+      cb(null, true);
+    },
+    limits: {
+      fileSize: 2 * 1024 * 1024,
+    },
+  }))
   async updateProfile(
     @Req() req: Request & { user: User },
     @Body() updateProfileDto: UpdateProfileDto,
+    @UploadedFile() avatarFile?: Express.Multer.File,
   ) {
-    this.logger.log(`Handling profile update for user ID=${req.user.id}`);
-    const user = await this.authService.updateProfile(req.user.id, updateProfileDto);
+    this.logger.log(`Handling profile update for user ID=${req.user.id}, File: ${avatarFile?.originalname ?? 'None'}`);
+
+    // Call service method, passing both DTO and file info
+    const updatedUser = await this.authService.updateProfile(
+      req.user.id,
+      updateProfileDto,
+      avatarFile,
+    );
+    // The avatar field in the response should now contain the new URL path
     return {
       message: 'Profile updated successfully',
       data: {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        fullName: user.fullName,
-        avatar: user.avatar,
-        bio: user.bio,
+        id: updatedUser.id,
+        email: updatedUser.email,
+        role: updatedUser.role,
+        fullName: updatedUser.fullName,
+        avatar: updatedUser.avatar,
+        bio: updatedUser.bio,
       },
     };
   }
+
 
   @Get('onboarding')
   @UseGuards(JwtAuthGuard)
@@ -148,5 +193,56 @@ export class AuthController {
       message: 'Guest login successful',
       data: result,
     };
+  }
+
+  @Get('profile')
+  @UseGuards(JwtAuthGuard)
+  getProfile(@Req() req: RequestWithUser) {
+    this.logger.log(`Fetching profile for authenticated user ID=${req.user?.id}`);
+
+    if (!req.user) {
+      this.logger.error('User object unexpectedly missing from request in getProfile after JwtAuthGuard.');
+      throw new UnauthorizedException('Authentication details not found on request.');
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { password, ...userProfileData } = req.user;
+
+    return {
+      message: 'Profile fetched successfully',
+      data: userProfileData,
+    };
+  }
+
+  @Patch('change-password')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async changePassword(
+    @Req() req: RequestWithUser,
+    @Body() changePasswordDto: ChangePasswordDto,
+  ): Promise<ApiResponse<never>> {
+    if (!req.user) {
+      throw new UnauthorizedException();
+    }
+    this.logger.log(`Password change attempt for userId=${req.user.id}`);
+
+    await this.authService.changePassword(req.user.id, changePasswordDto);
+
+    return { message: 'Password changed successfully.' };
+  }
+
+  @Delete('account')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async deleteAccount(
+    @Req() req: RequestWithUser,
+    @Body() deleteAccountDto: DeleteAccountDto,
+  ): Promise<ApiResponse<never>> {
+    if (!req.user) {
+      throw new UnauthorizedException();
+    }
+    this.logger.warn(`ACCOUNT DELETION requested by userId=${req.user.id}`);
+    await this.authService.deleteAccount(req.user.id, deleteAccountDto);
+    return { message: 'Account deleted successfully.' };
   }
 }

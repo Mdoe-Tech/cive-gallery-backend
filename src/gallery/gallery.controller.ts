@@ -15,7 +15,7 @@ import {
   Query,
   Logger,
   HttpStatus,
-  HttpCode, NotFoundException,
+  HttpCode, NotFoundException, ForbiddenException, Delete, ParseUUIDPipe, InternalServerErrorException,
 } from '@nestjs/common';
 import { GalleryService } from './gallery.service';
 import { User } from '../auth/entities/user.entity';
@@ -30,6 +30,11 @@ import { ValidationPipe } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/wt-auth.guard';
 import { GallerySearchService } from './gallery-search.service';
 import * as express from 'express';
+import { ApiResponse } from '../common/interfaces/api-response.interface';
+import { GalleryItem } from './entities/gallery.entity';
+import { UserRole } from '../common/interfaces/entities.interface';
+import { RolesGuard } from '../auth/roles.guard';
+import { Roles } from '../auth/roles.decorator';
 
 interface SearchResult {
   items: any[];
@@ -195,41 +200,50 @@ export class GalleryController {
   @UseGuards(JwtAuthGuard)
   async downloadFile(
     @Req() req: express.Request & { user: User },
-    @Res() res: express.Response,
+    @Res() res: express.Response, // Inject Response
     @Param('id') id: string,
   ) {
     this.logger.log(`Download request for itemId=${id} by userId=${req.user.id}`);
     try {
-      const filePath = await this.galleryService.downloadFile(req.user, id);
-      res.sendFile(filePath, { root: '.' }, err => {
+      const absoluteFilePath = await this.galleryService.downloadFile(req.user, id);
+      // Send the absolute path directly without the 'root' option
+      res.sendFile(absoluteFilePath, err => {
         if (err) {
-          this.logger.error(`Failed to send file: ${err.message}`, err.stack);
-          res.status(HttpStatus.INTERNAL_SERVER_ERROR).send({
-            message: 'Error downloading file',
-            error: err.message,
-          });
+          // Log the specific error encountered during file sending
+          this.logger.error(`Failed to send file '${absoluteFilePath}': ${err.message}`, err.stack);
+          // Avoid sending potentially sensitive error details to client
+          // Check if headers already sent before sending error response
+          if (!res.headersSent) {
+            res.status(HttpStatus.INTERNAL_SERVER_ERROR).send({
+              statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
+              message: 'Error downloading file.',
+            });
+          }
+        } else {
+          this.logger.log(`Successfully sent file: ${absoluteFilePath}`);
         }
       });
+
     } catch (error) {
-      if (error instanceof BadRequestException) {
-        res.status(HttpStatus.BAD_REQUEST).send({
-          message: error.message,
-        });
-      } else if (error instanceof NotFoundException) {
-        res.status(HttpStatus.NOT_FOUND).send({
-          message: error.message,
-        });
+      if (!res.headersSent) {
+        if (error instanceof BadRequestException) {
+          res.status(HttpStatus.BAD_REQUEST).send({ statusCode: HttpStatus.BAD_REQUEST, message: error.message });
+        } else if (error instanceof NotFoundException) {
+          res.status(HttpStatus.NOT_FOUND).send({ statusCode: HttpStatus.NOT_FOUND, message: error.message });
+        } else if (error instanceof ForbiddenException) {
+          res.status(HttpStatus.FORBIDDEN).send({ statusCode: HttpStatus.FORBIDDEN, message: error.message });
+        } else {
+          this.logger.error(`Unexpected download error for itemId=${id}: ${(error as Error).message}`, (error as Error).stack);
+          res.status(HttpStatus.INTERNAL_SERVER_ERROR).send({ statusCode: HttpStatus.INTERNAL_SERVER_ERROR, message: 'Error processing download request.' });
+        }
       } else {
-        this.logger.error(`Download error: ${(error as Error).message}`, (error as Error).stack);
-        res.status(HttpStatus.INTERNAL_SERVER_ERROR).send({
-          message: 'Error processing download request',
-        });
+        this.logger.error(`Error occurred after headers sent for itemId=${id}: ${(error as Error).message}`);
       }
     }
   }
 
   @Get('search')
-  @UseGuards(JwtAuthGuard) // Ensure the search endpoint is authenticated
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   async search(
     @Req() req: express.Request & { user: User },
@@ -285,6 +299,52 @@ export class GalleryController {
     } catch (err) {
       this.logger.error(`Cache clear error: ${(err as Error).message}`, (err as Error).stack);
       throw new BadRequestException(`Failed to clear cache: ${(err as Error).message}`);
+    }
+  }
+
+  @Get(':id')
+  @UseGuards(JwtAuthGuard)
+  async getGalleryItemById(
+    @Param('id', ParseUUIDPipe) itemId: string,
+    @Req() req: express.Request & { user?: User },
+  ): Promise<ApiResponse<GalleryItem>> {
+    this.logger.log(`Request for item details: itemId=${itemId}, userId=${req.user?.id ?? 'anonymous'}`);
+    const item = await this.galleryService.getGalleryItem(itemId, req.user);
+    return {
+      message: "Gallery item fetched successfully.",
+      data: item,
+    };
+  }
+
+  // --- NEW: Record View Endpoint ---
+  @Post(':id/view')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  recordItemView(
+    @Param('id', ParseUUIDPipe) itemId: string,
+  ): void {
+    this.logger.log(`Request to record view for itemId=${itemId}`);
+    this.galleryService.recordView(itemId).catch(err => {
+      this.logger.warn(`Background view recording failed for ${itemId}: ${err.message}`);
+    });
+    return;
+  }
+
+  // --- NEW: Delete Gallery Item Endpoint ---
+  @Delete(':id')
+  @Roles(UserRole.Admin, UserRole.Staff)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @HttpCode(HttpStatus.OK)
+  async deleteGalleryItem(
+    @Param('id', ParseUUIDPipe) itemId: string,
+    @Req() req: express.Request & { user: User },
+  ): Promise<ApiResponse<{ success: boolean }>> {
+    this.logger.log(`Request to delete itemId=${itemId} by userId=${req.user.id}`);
+    const success = await this.galleryService.deleteItem(itemId, req.user);
+    this.searchService.clearCache('search:*').catch(err => this.logger.warn(`Failed to clear search cache after deleting item ${itemId}: ${err.message}`));
+    if (success) {
+      return { message: 'Gallery item deleted successfully', data: { success: true } };
+    } else {
+      throw new InternalServerErrorException('Failed to delete item for an unknown reason.');
     }
   }
 }

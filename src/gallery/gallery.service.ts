@@ -1,4 +1,11 @@
-import { Injectable, BadRequestException, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+  Logger,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GalleryItem } from './entities/gallery.entity';
@@ -160,7 +167,7 @@ export class GalleryService {
         throw new BadRequestException('Tags array cannot be empty or contain only whitespace');
       }
       queryBuilder.andWhere('gallery.tags && :tags', { tags });
-      this.logger.debug(`Applying tags filter: AscendingListQuery: ${tags}`);
+      this.logger.debug(`Applying tags filter: AscendingListQuery: ${tags as any}`);
     }
 
     try {
@@ -256,5 +263,169 @@ export class GalleryService {
     }
 
     return normalized;
+  }
+
+  // --- NEW: Get Single Gallery Item ---
+  /**
+   * Fetches details for a single gallery item by its ID.
+   * Ensures the item is approved unless requested by an admin/staff or the uploader.
+   * @param itemId - The UUID of the gallery item.
+   * @param user - The currently authenticated user (optional, for permission checks).
+   * @returns The GalleryItem object.
+   * @throws NotFoundException if the item doesn't exist.
+   * @throws ForbiddenException if the user cannot access the unapproved item.
+   */
+  async getGalleryItem(itemId: string, user?: User): Promise<GalleryItem> {
+    this.logger.log(`Fetching details for itemId=${itemId}, requested by userId=${user?.id ?? 'anonymous'}`);
+
+    // Find the item and include the uploader details
+    const item = await this.galleryRepository.findOne({
+      where: { id: itemId },
+      relations: ['uploadedBy'], // Ensure uploader info is joined
+    });
+
+    if (!item) {
+      this.logger.warn(`Gallery item not found: id=${itemId}`);
+      throw new NotFoundException(`Gallery item with ID ${itemId} not found.`);
+    }
+
+    // Permission Check: Allow access if item is approved OR user is admin/staff OR user is the uploader
+    const isAdminOrStaff = user?.role === UserRole.Admin || user?.role === UserRole.Staff;
+    const isUploader = user?.id === item.uploadedBy?.id;
+
+    if (!item.isApproved && !isAdminOrStaff && !isUploader) {
+      this.logger.warn(`Forbidden access attempt for unapproved itemId=${itemId} by userId=${user?.id}`);
+      throw new ForbiddenException('You do not have permission to view this item.');
+    }
+
+    this.logger.log(`Successfully retrieved details for itemId=${itemId}`);
+    return item; // Return the full item details
+  }
+
+  // --- NEW: Record View Count ---
+  /**
+   * Increments the view count for a gallery item.
+   * Typically called when an item's detail view is accessed.
+   * Only increments if the item is approved (to avoid counting views on pending items).
+   * @param itemId - The UUID of the gallery item to record a view for.
+   */
+  async recordView(itemId: string): Promise<void> {
+    this.logger.debug(`Attempting to record view for itemId=${itemId}`);
+    try {
+      // Use QueryBuilder for safe increment and conditional update
+      await this.galleryRepository.createQueryBuilder()
+        .update(GalleryItem)
+        .set({ viewCount: () => '"viewCount" + 1' }) // Use raw SQL increment
+        .where('id = :id', { id: itemId })
+        .andWhere('isApproved = :isApproved', { isApproved: true }) // Only increment approved items
+        .execute();
+      this.logger.debug(`View recorded successfully for approved itemId=${itemId}`);
+    } catch (error) {
+      // Log error but don't fail the request just because view count update failed
+      this.logger.error(`Failed to increment viewCount for itemId=${itemId}: ${(error as Error).message}`);
+    }
+  }
+
+  // --- NEW: Delete Gallery Item ---
+  /**
+   * Deletes a gallery item by its ID, including associated files.
+   * Checks user permissions before deleting.
+   * @param itemId - The UUID of the gallery item to delete.
+   * @param user - The authenticated user requesting the deletion.
+   * @returns boolean - True if deletion was successful.
+   * @throws NotFoundException if the item doesn't exist.
+   * @throws ForbiddenException if the user lacks permission.
+   * @throws InternalServerErrorException on unexpected errors.
+   */
+  async deleteItem(itemId: string, user: User): Promise<boolean> {
+    this.logger.log(`Attempting to delete itemId=${itemId} by userId=${user.id} (role=${user.role})`);
+
+    const item = await this.galleryRepository.findOne({
+      where: { id: itemId },
+      relations: ['uploadedBy'], // Need uploader info for permission check
+    });
+
+    if (!item) {
+      this.logger.warn(`Delete failed: Item not found, id=${itemId}`);
+      throw new NotFoundException(`Gallery item with ID ${itemId} not found.`);
+    }
+
+    // --- Permission Check ---
+    const isAdminOrStaff = user.role === UserRole.Admin || user.role === UserRole.Staff;
+    const isUploader = user.id === item.uploadedBy?.id;
+
+    // Define your deletion policy here:
+    // Example: Admins/Staff can delete anything. Uploaders can only delete their own?
+    if (!isAdminOrStaff && !isUploader) { // Adjust this condition based on your policy
+      this.logger.warn(`Forbidden delete attempt for itemId=${itemId} by userId=${user.id}`);
+      throw new ForbiddenException('You do not have permission to delete this item.');
+    }
+    // Example policy 2: Only Admin/Staff can delete
+    // if (!isAdminOrStaff) {
+    //      this.logger.warn(`Forbidden delete attempt for itemId=${itemId} by non-Admin/Staff userId=${user.id}`);
+    //      throw new ForbiddenException('You do not have permission to delete items.');
+    // }
+    // --- End Permission Check ---
+
+    // Store file paths before deleting the record
+    const mediaFilePath = item.fileUrl ? path.join(process.cwd(), 'uploads', path.basename(item.fileUrl)) : null; // More robust path construction needed if fileUrl includes subdirs
+    const thumbFilePath = item.thumbnailUrl ? path.join(process.cwd(), 'uploads', path.basename(item.thumbnailUrl)) : null; // Same as above
+
+    // It might be safer to delete files *after* DB record, but depends on transaction/rollback needs.
+    // Here we delete DB first, then attempt file cleanup.
+
+    try {
+      const deleteResult = await this.galleryRepository.delete({ id: itemId });
+
+      if (deleteResult.affected === 0) {
+        // This shouldn't happen if findOne succeeded, but good safety check
+        this.logger.warn(`Delete failed: Item with id=${itemId} found but not deleted from DB.`);
+        throw new InternalServerErrorException('Failed to delete item from database.');
+      }
+
+      this.logger.log(`Successfully deleted database record for itemId=${itemId}`);
+
+      // --- Attempt to Delete Files ---
+      // These operations are fire-and-forget with logging for simplicity.
+      // For more robust handling, consider a background job queue.
+      if (mediaFilePath) {
+        this.deleteFileOnDisk(mediaFilePath, 'media');
+      }
+      if (thumbFilePath) {
+        this.deleteFileOnDisk(thumbFilePath, 'thumbnail');
+      }
+      // --- End File Deletion ---
+
+      return true; // Indicate successful DB deletion
+
+    } catch (error) {
+      // Handle potential DB errors during delete
+      if (error instanceof ForbiddenException || error instanceof NotFoundException) {
+        throw error; // Re-throw specific known errors
+      }
+      this.logger.error(`Failed to delete item (DB or file cleanup): ${(error as Error).message}`, (error as Error).stack);
+      throw new InternalServerErrorException('An error occurred while deleting the gallery item.');
+    }
+  }
+
+  /**
+   * Helper function to delete a file from disk with error handling.
+   * @param filePath - The absolute path to the file.
+   * @param fileType - A description ('media', 'thumbnail') for logging.
+   */
+  private async deleteFileOnDisk(filePath: string, fileType: string): Promise<void> {
+    try {
+      await fs.access(filePath); // Check if file exists first
+      await fs.unlink(filePath);
+      this.logger.log(`Successfully deleted ${fileType} file: ${filePath}`);
+    } catch (err: any) {
+      // Log error if file deletion fails (e.g., file not found, permissions)
+      // ENOENT (file not found) might be acceptable if it was already cleaned up.
+      if (err.code !== 'ENOENT') {
+        this.logger.error(`Failed to delete ${fileType} file at ${filePath}: ${err.message}`);
+      } else {
+        this.logger.warn(`Attempted to delete ${fileType} file, but it was not found (possibly already deleted): ${filePath}`);
+      }
+    }
   }
 }

@@ -17,14 +17,14 @@ export class User implements IUser {
   @Column({ type: 'enum', enum: UserRole, default: UserRole.Student })
   role: UserRole;
 
-  @Column({ nullable: true })
-  avatar: string;
+  @Column({ type: 'varchar', nullable: true })
+  avatar: string | null;
 
-  @Column({ nullable: true })
-  bio: string;
+  @Column({ type: 'text', nullable: true })
+  bio: string | null;
 
-  @Column({ nullable: true })
-  fullName: string;
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  fullName: string | null;
 
   @OneToMany(() => Update, (update) => update.author)
   updates: Update[];

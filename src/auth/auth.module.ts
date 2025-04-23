@@ -12,6 +12,7 @@ import { ResetToken } from './entities/reset-token.entity';
 import { Onboarding } from './entities/onboarding.entity';
 import { JwtStrategy } from './jwt.strategy';
 import { GoogleStrategy } from './google.strategy';
+import { RolesGuard } from './roles.guard';
 
 @Module({
   imports: [
@@ -33,8 +34,9 @@ import { GoogleStrategy } from './google.strategy';
   controllers: [AuthController],
   providers: [
     AuthService,
-    JwtStrategy, // Register your strategies
+    JwtStrategy,
     GoogleStrategy,
+    RolesGuard,
   ],
   exports: [AuthService, JwtModule, PassportModule],
 })

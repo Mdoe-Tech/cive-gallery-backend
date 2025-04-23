@@ -1,4 +1,5 @@
-import { IsOptional, IsString, IsInt, Min, IsEnum } from 'class-validator';
+// src/gallery/dto/search.dto.ts
+import { IsOptional, IsString, IsInt, Min, IsEnum, IsBoolean } from 'class-validator'; // Add IsBoolean
 import { Type } from 'class-transformer';
 
 export enum SortBy {
@@ -31,6 +32,11 @@ export class SearchDto {
   @IsOptional()
   @IsString()
   endDate?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  isApproved?: boolean;
 
   @IsOptional()
   @IsEnum(SortBy)
