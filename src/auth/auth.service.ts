@@ -1,9 +1,11 @@
 import {
-  Injectable,
-  UnauthorizedException,
-  NotFoundException,
-  Logger,
   BadRequestException,
+  ForbiddenException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -20,6 +22,11 @@ import { randomBytes } from 'crypto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { Onboarding } from './entities/onboarding.entity';
 import { UserRole } from '../common/interfaces/entities.interface';
+import * as path from 'node:path';
+import { access as accessAsync, unlink as unlinkAsync } from 'fs/promises';
+import { DeleteAccountDto } from './dto/delete-account.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
+
 
 @Injectable()
 export class AuthService {
@@ -118,7 +125,7 @@ export class AuthService {
       const savedUser = await this.userRepository.save(user);
       this.logger.log(`Created user: ID=${savedUser.id}, email=${email}`);
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { password: _, ...result } = savedUser; // Exclude password from returned object
+      const { password: _, ...result } = savedUser;
       return result as User;
     } catch (error) {
       this.logger.error(`Error creating user: ${error.message}`, error.stack);
@@ -201,7 +208,7 @@ export class AuthService {
 
     const resetToken = await this.resetTokenRepository.findOne({
       where: { token },
-      relations: ['user'], // Ensure the user relation is loaded
+      relations: ['user'],
     });
 
     // Check if token exists
@@ -253,13 +260,10 @@ export class AuthService {
     const user = await this.userRepository.findOne({ where: { email } });
     if (user) {
       this.logger.log(`Found existing user via Google email: ${email}, ID=${user.id}`);
-      // Potentially update user info (avatar, name) here if needed/available from Google profile
       return user;
     }
 
     this.logger.debug(`No user found, creating new Google user: ${email}`);
-    // Create Google user without a password
-    // Use 'undefined' for password to satisfy DeepPartial<User> when nullable: true
     const newUser = this.userRepository.create({
       email,
       password: undefined,
@@ -274,7 +278,6 @@ export class AuthService {
       return result as User;
     } catch (error) {
       this.logger.error(`Error creating Google user: ${error.message}`, error.stack);
-      // Provide a more specific error message if possible (e.g., email constraint)
       if (error.code === '23505') {
         throw new BadRequestException('An account with this email already exists.');
       }
@@ -296,33 +299,64 @@ export class AuthService {
   async updateProfile(
     userId: string,
     updateProfileDto: UpdateProfileDto,
+    avatarFile?: Express.Multer.File,
   ): Promise<User> {
-    this.logger.log(
-      `Updating profile for user ID=${userId}, DTO: ${JSON.stringify(updateProfileDto)}`,
-    );
+    this.logger.log(`Updating profile for user ID=${userId}, File provided: ${!!avatarFile}`);
 
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       this.logger.warn(`User not found for profile update: ID=${userId}`);
+      if (avatarFile) {
+        await this.deleteFileSilently(avatarFile.path);
+      }
       throw new NotFoundException('User not found');
     }
-    // Merge the changes from DTO into the user entity
-    Object.assign(user, updateProfileDto);
+
+    // --- Handle Avatar Upload ---
+    let oldAvatarPath: string | null = null;
+    if (avatarFile) {
+      // Store the old avatar URL path for potential deletion later
+      if (user.avatar) {
+        oldAvatarPath = path.join(process.cwd(), user.avatar);
+      }
+      const newAvatarUrlPath = `/uploads/avatars/${avatarFile.filename}`;
+      user.avatar = newAvatarUrlPath; // Update user entity with the new path
+      this.logger.log(`New avatar URL path set for user ID=${userId}: ${newAvatarUrlPath}`);
+    }
+    // --- End Avatar Handling ---
+
+    // Merge other changes from DTO (fullName, bio)
+    // Use nullish coalescing to avoid overwriting existing values with undefined
+    user.fullName = updateProfileDto.fullName ?? user.fullName;
+    user.bio = updateProfileDto.bio ?? user.bio;
+    // Handle explicit clearing if DTO sends null
+    if (updateProfileDto.fullName === null) user.fullName = null;
+    if (updateProfileDto.bio === null) user.bio = null;
 
     try {
+      // Save the updated user entity (with potentially new avatar path)
       const savedUser = await this.userRepository.save(user);
-      this.logger.log(`Updated profile for user: ${savedUser.email}, ID=${userId}`);
+      this.logger.log(`Saved updated profile for user: ${savedUser.email}, ID=${userId}`);
+
+      // --- Delete Old Avatar File (AFTER successful save) ---
+      if (avatarFile && oldAvatarPath) {
+        this.logger.debug(`Attempting to delete old avatar: ${oldAvatarPath}`);
+        await this.deleteFileSilently(oldAvatarPath);
+      }
+      // --- End Delete Old Avatar ---
+
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { password, ...result } = savedUser;
       return result as User;
+
     } catch (error) {
-      this.logger.error(
-        `Error updating profile for ID=${userId}: ${error.message}`,
-        error.stack,
-      );
-      throw new BadRequestException(
-        `Failed to update profile.`,
-      );
+      this.logger.error(`Error saving updated profile for ID=${userId}: ${(error as Error).message}`, (error as Error).stack);
+      // If save failed AND a new file was uploaded, attempt to delete the newly uploaded file
+      if (avatarFile) {
+        this.logger.warn(`Rolling back: deleting newly uploaded avatar due to save error: ${avatarFile.path}`);
+        await this.deleteFileSilently(avatarFile.path);
+      }
+      throw new InternalServerErrorException(`Failed to update profile.`);
     }
   }
 
@@ -356,5 +390,124 @@ export class AuthService {
     const access_token = this.jwtService.sign(payload);
     this.logger.log(`Generated JWT for guest user: sub=${guestSub}`);
     return { access_token };
+  }
+
+  async changePassword(userId: string, changePasswordDto: ChangePasswordDto): Promise<void> {
+    this.logger.log(`Attempting password change for userId=${userId}`);
+    const { currentPassword, newPassword } = changePasswordDto;
+
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+
+    if (!user) {
+      this.logger.error(`Password change failed: User not found, id=${userId}`);
+      // Avoid revealing user existence, but throw error
+      throw new UnauthorizedException('Password change failed.');
+    }
+
+    // User must have a password set (might be OAuth user without password)
+    if (!user.password) {
+      this.logger.warn(`Password change attempt for user without password: id=${userId}`);
+      throw new BadRequestException('Password cannot be changed for this account type.');
+    }
+
+    // 1. Verify Current Password
+    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isPasswordValid) {
+      this.logger.warn(`Password change failed: Invalid current password for userId=${userId}`);
+      throw new UnauthorizedException('Incorrect current password.');
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    try {
+      await this.userRepository.save(user);
+      this.logger.log(`Password successfully changed for userId=${userId}`);
+      // Optional: Invalidate other sessions/tokens here if needed
+    } catch (error) {
+      this.logger.error(`Database error during password change for userId=${userId}: ${(error as Error).message}`, (error as Error).stack);
+      throw new InternalServerErrorException('Could not update password due to a server error.');
+    }
+  }
+
+  async deleteAccount(userId: string, deleteAccountDto: DeleteAccountDto): Promise<boolean> {
+    this.logger.warn(`Attempting ACCOUNT DELETION for userId=${userId}`);
+    const { password } = deleteAccountDto;
+
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+
+    if (!user) {
+      this.logger.error(`Account deletion failed: User not found, id=${userId}`);
+      // Avoid revealing user existence directly in error message
+      throw new UnauthorizedException('Account deletion failed.');
+    }
+
+    // 1. Verify Password Confirmation
+    // Handle users without passwords (e.g., Google sign-in only) - they might not be able to delete this way
+    if (!user.password) {
+      this.logger.error(`Account deletion blocked: User id=${userId} has no password set (possibly OAuth).`);
+      throw new ForbiddenException('Account deletion requires password confirmation, which is not available for this account type.');
+    }
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      this.logger.warn(`Account deletion failed: Invalid password confirmation for userId=${userId}`);
+      throw new UnauthorizedException('Incorrect password provided for account deletion.');
+    }
+
+    // --- Deletion Process ---
+    this.logger.log(`Password confirmed for deletion of userId=${userId}. Proceeding with deletion.`);
+
+    // 2. Store paths for cleanup (if user has avatar)
+    const avatarPath = user.avatar ? path.join(process.cwd(), user.avatar) : null;
+
+    // 3. Delete User Record from Database
+    // NOTE: This assumes cascade deletes are NOT set up for related entities (gallery items, etc.)
+    // If cascades ARE set up, this might be enough.
+    // If NOT, you MUST manually delete related records *before* deleting the user.
+    try {
+      this.logger.log(`Deleting related data for userId=${userId} (if applicable)...`);
+      // Add your specific related data deletion calls here
+
+
+      // Now delete the user record
+      const deleteResult = await this.userRepository.delete({ id: userId });
+
+      if (deleteResult.affected === 0) {
+        this.logger.error(`Account deletion failed: User record id=${userId} not deleted from DB after confirmation.`);
+        throw new InternalServerErrorException('Failed to delete user account record.');
+      }
+
+      this.logger.log(`Successfully deleted database record for userId=${userId}`);
+
+      // 4. Attempt to Delete Avatar File (Best Effort)
+      if (avatarPath) {
+        await this.deleteFileSilently(avatarPath);
+      }
+      // !! IMPORTANT !! Add logic here to delete other user-specific files (e.g., gallery media)
+
+      return true;
+
+    } catch (error) {
+      this.logger.error(`Error during account deletion process for userId=${userId}: ${(error as Error).message}`, (error as Error).stack);
+      throw new InternalServerErrorException('An error occurred while deleting the user account.');
+    }
+  }
+
+  /** Helper to delete files without throwing errors */
+  private async deleteFileSilently(filePath: string): Promise<void> {
+    try {
+      // Optional: Check existence first using the promise version
+      await accessAsync(filePath);
+
+      // Call the explicitly imported promise version
+      await unlinkAsync(filePath);
+      this.logger.log(`Successfully deleted file: ${filePath}`);
+    } catch (error: any) {
+      // Log only if it's not a "file not found" error
+      if (error.code !== 'ENOENT') {
+        this.logger.error(`Failed to delete file ${filePath}: ${error.message}`);
+      } else {
+        // Optionally log ENOENT differently if desired
+        this.logger.warn(`File not found for deletion (ENOENT): ${filePath}`);
+      }
+    }
   }
 }
