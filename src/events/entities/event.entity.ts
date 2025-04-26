@@ -33,7 +33,7 @@ export class Event {
   organizer: string;
 
   @Column({ type: 'enum', enum: EventStatus, default: EventStatus.Upcoming })
-  status: EventStatus;
+  status: "Upcoming" | "Ongoing" | "Completed" | "Cancelled";
 
   @ManyToOne(() => User, (user) => user.events, { eager: true })
   createdBy: IUser;

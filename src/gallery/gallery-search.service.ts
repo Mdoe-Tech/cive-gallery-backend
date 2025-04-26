@@ -4,12 +4,12 @@ import { Injectable, Logger, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import type { Cache } from 'cache-manager'; // Base Cache interface
+import type { Cache } from 'cache-manager';
 import { GalleryItem } from './entities/gallery.entity';
 import { SearchHistory } from './entities/search-history.entity';
 import { SearchDto, SortBy, SortOrder } from './dto/search.dto';
 import { User } from '../auth/entities/user.entity';
-import { UserRole } from '../common/interfaces/entities.interface'; // Adjust path if needed
+import { UserRole } from '../common/interfaces/entities.interface';
 
 // --- Interfaces ---
 
