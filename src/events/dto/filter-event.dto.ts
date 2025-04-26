@@ -11,5 +11,9 @@ export class FilterEventDto {
 
   @IsString()
   @IsOptional()
+  status?: string;
+
+  @IsString()
+  @IsOptional()
   endDate?: string;
 }

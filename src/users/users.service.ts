@@ -1,7 +1,7 @@
 // src/users/users.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { ILike, Repository } from 'typeorm';
 import { User } from '../auth/entities/user.entity';
 import { ListUsersDto } from './dto/list-users.dto';
 import { UserRole } from '../common/interfaces/entities.interface';
@@ -69,6 +69,44 @@ export class UsersService {
     } catch (error) {
       this.logger.error(`Failed to find users: ${(error as Error).message}`, (error as Error).stack);
       throw error;
+    }
+  }
+
+  /**
+   * Searches for users by fullName or email.
+   * Returns a limited number of matching users with simplified data.
+   * @param query - The search term.
+   * @param limit - Maximum number of results to return.
+   * @returns An array of SimpleUser objects.
+   */
+  async searchUsers(query: string, limit: number = 10): Promise<SimpleUser[]> {
+    this.logger.debug(`Searching users with query: "${query}", limit: ${limit}`);
+    if (!query || query.trim().length < 2) { // Require at least 2 characters
+      this.logger.debug('Search query too short, returning empty array.');
+      return [];
+    }
+
+    const searchTerm = `%${query}%`;
+
+    try {
+      const users = await this.userRepository.find({
+        select: ['id', 'fullName', 'email', 'role'],
+        where: [
+          { fullName: ILike(searchTerm) },
+          { email: ILike(searchTerm) }
+        ],
+        // Optionally filter out specific roles if needed
+        order: {
+          fullName: 'ASC',
+        },
+        take: limit
+      });
+
+      this.logger.log(`Found ${users.length} users matching search term "${query}".`);
+      return users.map(u => ({ id: u.id, fullName: u.fullName, email: u.email, role: u.role }));
+    } catch (error: any) {
+      this.logger.error(`Failed to search users with query "${query}": ${error.message}`, error.stack);
+      return [];
     }
   }
 }
