@@ -33,7 +33,7 @@ async function bootstrap() {
     new ValidationPipe({
       whitelist: true,
       transform: true,
-      // forbidNonWhitelisted: true, // Optional: Throw error if extra properties are sent
+      // forbidNonWhitelisted: true,
     }),
   );
   logger.log('Global ValidationPipe configured.');
