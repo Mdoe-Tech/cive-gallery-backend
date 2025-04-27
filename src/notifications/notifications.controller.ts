@@ -28,11 +28,10 @@ import { PaginatedResponse } from '../common/interfaces/paginated-response.inter
 import { Notification } from './entities/notification.entity';
 import { NotificationPreference } from './entities/notification-preference.entity';
 
-
-import { Request } from 'express';
+import * as express from 'express';
 import { JwtAuthGuard } from '../auth/wt-auth.guard';
 
-export interface AuthenticatedRequest extends Request {
+export interface AuthenticatedRequest extends express.Request {
   user: User;
 }
 
