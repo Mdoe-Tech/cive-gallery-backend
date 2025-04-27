@@ -5,7 +5,7 @@ import {
   NotFoundException,
   ForbiddenException,
   Logger,
-  InternalServerErrorException,
+  InternalServerErrorException, StreamableFile,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, DeepPartial } from 'typeorm';
@@ -15,14 +15,16 @@ import { UploadDto } from './dto/upload.dto';
 import { ApproveDto } from './dto/approve.dto';
 import { FilterDto } from './dto/filter.dto';
 import * as path from 'path';
-import * as fs from 'fs/promises';
 import sharp from 'sharp';
 import * as ffprobeStatic from 'ffprobe-static';
 import ffmpeg from 'fluent-ffmpeg';
+import * as fs from 'fs';
+import * as fsp from 'fs/promises';
+import * as mime from 'mime-types';
+import * as express from 'express';
 
 ffmpeg.setFfprobePath(ffprobeStatic.path);
 
-import { Request } from 'express';
 import { UserRole } from '../common/interfaces/entities.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/entities/notification.entity';
@@ -30,6 +32,7 @@ import { NotificationType } from '../notifications/entities/notification.entity'
 @Injectable()
 export class GalleryService {
   private readonly logger = new Logger(GalleryService.name);
+  private readonly MEDIA_UPLOAD_PATH = 'uploads/media';
 
   constructor(
     @InjectRepository(GalleryItem)
@@ -63,7 +66,6 @@ export class GalleryService {
     const tags = this.normalizeTags(uploadDto.tags);
     const searchVectorContent = [uploadDto.caption ?? '', ...tags].join(' ');
 
-    // Fix TS2769 (thumbnailUrl type): Map null to undefined before create
     const galleryItemData: DeepPartial<GalleryItem> = {
       fileUrl,
       caption: uploadDto.caption ?? '',
@@ -97,6 +99,50 @@ export class GalleryService {
       throw new InternalServerErrorException('Failed to save gallery item.');
     }
   }
+
+  async getAttachmentStream(filename: string, res: express.Response): Promise<StreamableFile> {
+    // Construct the full, absolute path to the potential file
+    const filePath = path.join(process.cwd(), this.MEDIA_UPLOAD_PATH, filename);
+    this.logger.log(`Attempting to stream gallery file directly from path: ${filePath}`);
+
+    try {
+      // 1. Check if the file exists and is readable using fs/promises
+      await fsp.access(filePath, fs.constants.R_OK); // Check for read access
+
+      // 2. Get file statistics (primarily for size) using fs/promises
+      const stats = await fsp.stat(filePath);
+
+      // 3. Determine the Content-Type using the mime-types library
+      // Fallback to 'application/octet-stream' if lookup fails
+      const contentType = mime.lookup(filename) || 'application/octet-stream';
+
+      // 4. Set necessary HTTP headers on the response object
+      res.set({
+        'Content-Type': contentType,
+        'Content-Disposition': `attachment; filename="${filename}"`, // Suggest download with original name
+        'Content-Length': stats.size.toString(), // Provide file size
+      });
+
+      // 5. Create a readable stream from the file path using standard 'fs'
+      const fileStream = fs.createReadStream(filePath);
+
+      // 6. Wrap the stream in NestJS's StreamableFile and return
+      this.logger.log(`Streaming ${filename} (${stats.size} bytes, type: ${contentType})`);
+      return new StreamableFile(fileStream);
+
+    } catch (error: any) {
+      // Handle errors, specifically 'ENOENT' (file not found)
+      if (error.code === 'ENOENT') {
+        this.logger.warn(`Attachment file not found at path: ${filePath}`);
+        throw new NotFoundException(`Attachment file '${filename}' not found.`);
+      } else {
+        // Log other potential errors (e.g., permissions, disk errors)
+        this.logger.error(`Error accessing or streaming attachment file ${filePath}: ${error.message}`, error.stack);
+        throw new InternalServerErrorException('Could not retrieve the requested attachment file.');
+      }
+    }
+  }
+
 
   async bulkUpload(req: Request & {
     user: User
@@ -249,7 +295,7 @@ export class GalleryService {
     const filePath = path.join(process.cwd(), 'uploads', 'media', filename);
 
     try {
-      await fs.access(filePath);
+      await fsp.access(filePath);
       this.logger.log(`Serving file for download: ${filePath}`);
       return filePath;
     } catch (error: any) { // Fix ESLint: Use 'error'
@@ -260,54 +306,86 @@ export class GalleryService {
 
   private async generateThumbnail(file: Express.Multer.File): Promise<string | null> {
     const startTime = Date.now();
-    this.logger.log(`Generating thumbnail for file=${file.filename} (type: ${file.mimetype})`);
+    this.logger.log(`Generating HIGH QUALITY thumbnail for file=${file.filename} (type: ${file.mimetype})`); // Log change
 
     const thumbnailDir = path.join(process.cwd(), 'uploads', 'thumbnails');
-    await fs.mkdir(thumbnailDir, { recursive: true });
+    await fsp.mkdir(thumbnailDir, { recursive: true });
 
     const uniqueSuffix = Date.now();
     const baseName = path.basename(file.filename, path.extname(file.filename));
-    const ext = file.mimetype.startsWith('video') ? 'jpg' :
-      file.mimetype === 'image/png' ? 'png' :
-        file.mimetype === 'image/webp' ? 'webp' :
-          'jpg';
+
+    // Determine extension (consider keeping original format for quality if possible, or high-quality JPG/PNG)
+    let ext = path.extname(file.filename).toLowerCase().substring(1); // Start with original extension
+    let outputFormat: keyof sharp.FormatEnum | undefined = undefined;
+
+    // Decide on output format - maybe stick closer to original or use high-quality common formats
+    if (ext === 'jpg' || ext === 'jpeg') {
+      outputFormat = 'jpeg';
+      ext = 'jpg'; // Normalize extension
+    } else if (ext === 'png') {
+      outputFormat = 'png';
+    } else if (ext === 'webp') {
+      outputFormat = 'webp';
+    } else if (file.mimetype.startsWith('video/')) {
+      outputFormat = 'jpeg'; // Output video frames as high-quality JPG
+      ext = 'jpg';
+    } else if (file.mimetype.startsWith('image/')) {
+      // Fallback for other image types (gif, etc.) -> maybe output as PNG for lossless or high-Q JPG
+      outputFormat = 'jpeg'; // Or 'png'
+      ext = 'jpg'; // Or 'png'
+    } else {
+      this.logger.warn(`Unsupported file type for thumbnail generation: ${file.mimetype}`);
+      return null;
+    }
+
+
     const thumbnailName = `thumb-${baseName}-${uniqueSuffix}.${ext}`;
     const thumbnailPath = path.join(thumbnailDir, thumbnailName);
     const thumbnailUrl = `/uploads/thumbnails/${thumbnailName}`;
 
     try {
       if (file.mimetype.startsWith('image/')) {
-        await sharp(file.path)
-          .resize(300, 300, { fit: 'cover', position: 'attention' })
-          .toFormat(ext as keyof sharp.FormatEnum, { quality: 80 })
-          .toFile(thumbnailPath);
+        let sharpInstance = sharp(file.path)
+          .resize(400, 400, { fit: 'inside', withoutEnlargement: true });
+
+        // Apply high quality settings based on chosen format
+        if (outputFormat === 'jpeg') {
+          sharpInstance = sharpInstance.jpeg({
+            quality: 95,
+            progressive: true
+          });
+        } else if (outputFormat === 'png') {
+          sharpInstance = sharpInstance.png({
+            compressionLevel: 3,
+            adaptiveFiltering: true
+          });
+        } else if (outputFormat === 'webp') {
+          sharpInstance = sharpInstance.webp({
+            quality: 95,
+          });
+        } else {
+          sharpInstance = sharpInstance.jpeg({ quality: 95 });
+        }
+
+        await sharpInstance.toFile(thumbnailPath);
+
       } else if (file.mimetype.startsWith('video/')) {
         await new Promise<void>((resolve, reject) => {
           const command = ffmpeg(file.path)
             .seekInput('00:00:01')
             .frames(1)
-            .size('300x?')
-            .outputOptions('-q:v 3')
+            .size('400x?')
+            .outputOptions('-q:v 2')
             .output(thumbnailPath)
-            // Fix TS2769: Provide the correct callback signature for 'end'
-            .on('end', (/* stdout: string | null, stderr: string | null */) => {
-              this.logger.debug(`FFmpeg thumbnail generation successful for ${file.filename}`);
-              resolve(); // Resolve the promise
-            })
-            .on('error', (err: Error) => {
-              this.logger.error(`FFmpeg error for ${file.filename}: ${err.message}`);
-              // Handle specific errors if needed, then reject
-              reject(err); // Reject the promise on error
-            });
+            .on('end', () => resolve())
+            .on('error', (err: Error) => reject(err));
           command.run();
         });
-      } else {
-        this.logger.warn(`Unsupported file type for thumbnail generation: ${file.mimetype}`);
-        return null;
       }
-      this.logger.log(`Thumbnail generated: ${thumbnailUrl}, duration=${Date.now() - startTime}ms`);
+
+      this.logger.log(`HIGH QUALITY Thumbnail generated: ${thumbnailUrl}, duration=${Date.now() - startTime}ms`);
       return thumbnailUrl;
-    } catch (error: any) { // Fix ESLint: Use 'error'
+    } catch (error: any) {
       this.logger.error(`Thumbnail generation process failed for ${file.filename}: ${error.message}`, error.stack);
       return null;
     }
@@ -385,8 +463,8 @@ export class GalleryService {
 
   private async deleteFileOnDisk(filePath: string, fileType: string): Promise<void> {
     try {
-      await fs.access(filePath);
-      await fs.unlink(filePath);
+      await fsp.access(filePath);
+      await fsp.unlink(filePath);
       this.logger.log(`Deleted ${fileType} file: ${filePath}`);
     } catch (err: any) { // Fix ESLint: Use 'err'
       if (err.code !== 'ENOENT') this.logger.error(`Failed delete ${fileType} file ${filePath}: ${err.message}`);
