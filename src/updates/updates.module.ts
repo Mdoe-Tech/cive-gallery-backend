@@ -16,5 +16,6 @@ import { UpdatesController } from './updates.controller';
   ],
   providers: [UpdatesService],
   controllers: [UpdatesController],
+  exports: [UpdatesService]
 })
 export class UpdatesModule {}
