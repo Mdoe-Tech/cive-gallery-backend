@@ -25,7 +25,7 @@ import * as express from 'express';
 import * as ffmpegStatic from 'ffmpeg-static';
 
 // Fix FFmpeg path configuration
-ffmpeg.setFfmpegPath(ffmpegStatic as string);
+ffmpeg.setFfmpegPath(ffmpegStatic as unknown as string);
 ffmpeg.setFfprobePath(ffprobeStatic.path);
 
 import { UserRole } from '../common/interfaces/entities.interface';
@@ -41,7 +41,7 @@ export class GalleryService {
   constructor(
     @InjectRepository(GalleryItem)
     private readonly galleryRepository: Repository<GalleryItem>,
-    @InjectRepository(User)
+    @InjectRepository(User) 
     private readonly userRepository: Repository<User>,
     private readonly notificationsService: NotificationsService,
   ) {

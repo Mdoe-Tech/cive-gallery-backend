@@ -1,6 +1,6 @@
-import * as express from 'express';
+import { Request } from 'express';
 import { User } from '../../auth/entities/user.entity';
 
-export interface AuthenticatedRequest extends express.Request {
+export interface AuthenticatedRequest extends Request {
   user: User;
 } 
