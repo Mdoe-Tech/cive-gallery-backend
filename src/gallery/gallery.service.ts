@@ -17,21 +17,20 @@ import { FilterDto } from './dto/filter.dto';
 import * as path from 'path';
 import sharp from 'sharp';
 import * as ffprobeStatic from 'ffprobe-static';
-import ffmpeg from 'fluent-ffmpeg';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as mime from 'mime-types';
 import * as express from 'express';
-import * as ffmpegStatic from 'ffmpeg-static';
-
-// Fix FFmpeg path configuration
-ffmpeg.setFfmpegPath(ffmpegStatic as unknown as string);
-ffmpeg.setFfprobePath(ffprobeStatic.path);
-
 import { UserRole } from '../common/interfaces/entities.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/entities/notification.entity';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
+
+// Configure FFmpeg
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegStatic = require('ffmpeg-static');
+ffmpeg.setFfmpegPath(ffmpegStatic);
+ffmpeg.setFfprobePath(ffprobeStatic.path);
 
 @Injectable()
 export class GalleryService {
@@ -44,8 +43,7 @@ export class GalleryService {
     @InjectRepository(User) 
     private readonly userRepository: Repository<User>,
     private readonly notificationsService: NotificationsService,
-  ) {
-  }
+  ) {}
 
   async uploadFile(req: AuthenticatedRequest, file: Express.Multer.File | undefined, uploadDto: UploadDto): Promise<GalleryItem> {
     const startTime = Date.now();
