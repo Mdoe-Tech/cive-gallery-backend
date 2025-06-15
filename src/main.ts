@@ -1,4 +1,3 @@
-// src/main.ts
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
@@ -12,14 +11,12 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   // --- Enable CORS ---
-  const configService = app.get(ConfigService);
-  const frontendUrl = configService.get<string>('FRONTEND_URL', 'http://localhost:3000');
-  logger.log(`Enabling CORS for origin: ${frontendUrl}`);
   app.enableCors({
-    origin: frontendUrl,
+    origin: '*', // Allow all origins
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
+  logger.log('Enabling CORS for all origins');
   // --- End CORS ---
 
   // --- Set Global Prefix ---
@@ -39,7 +36,7 @@ async function bootstrap() {
   logger.log('Global ValidationPipe configured.');
 
   // --- Static Assets ---
-  const staticAssetsPath = join(__dirname, '..', 'uploads');
+  const staticAssetsPath = join(__dirname, '..', 'Uploads');
   const staticAssetsPrefix = '/uploads/';
   app.useStaticAssets(staticAssetsPath, {
     prefix: staticAssetsPrefix,
@@ -51,6 +48,7 @@ async function bootstrap() {
   logger.log('WebSocket IoAdapter configured.');
 
   // --- Start Listening ---
+  const configService = app.get(ConfigService);
   const port = configService.get<number>('PORT', 5050);
   await app.listen(port);
 

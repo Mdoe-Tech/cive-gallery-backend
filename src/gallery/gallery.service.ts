@@ -22,12 +22,16 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as mime from 'mime-types';
 import * as express from 'express';
+import * as ffmpegStatic from 'ffmpeg-static';
 
+// Fix FFmpeg path configuration
+ffmpeg.setFfmpegPath(ffmpegStatic as string);
 ffmpeg.setFfprobePath(ffprobeStatic.path);
 
 import { UserRole } from '../common/interfaces/entities.interface';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/entities/notification.entity';
+import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 
 @Injectable()
 export class GalleryService {
@@ -43,9 +47,7 @@ export class GalleryService {
   ) {
   }
 
-  async uploadFile(req: Request & {
-    user: User
-  }, file: Express.Multer.File | undefined, uploadDto: UploadDto): Promise<GalleryItem> {
+  async uploadFile(req: AuthenticatedRequest, file: Express.Multer.File | undefined, uploadDto: UploadDto): Promise<GalleryItem> {
     const startTime = Date.now();
     const uploader = req.user;
     this.logger.log(`Starting upload for userId=${uploader.id}, file=${file?.originalname ?? 'none'}`);
@@ -144,9 +146,7 @@ export class GalleryService {
   }
 
 
-  async bulkUpload(req: Request & {
-    user: User
-  }, files: Express.Multer.File[], uploadDto: UploadDto): Promise<GalleryItem[]> {
+  async bulkUpload(req: AuthenticatedRequest, files: Express.Multer.File[], uploadDto: UploadDto): Promise<GalleryItem[]> {
     const startTime = Date.now();
     const uploader = req.user;
     this.logger.log(`Starting bulk upload for userId=${uploader.id}, files=${files.length}`);
@@ -377,8 +377,14 @@ export class GalleryService {
             .size('400x?')
             .outputOptions('-q:v 2')
             .output(thumbnailPath)
-            .on('end', () => resolve())
-            .on('error', (err: Error) => reject(err));
+            .on('end', () => {
+              this.logger.log(`Video thumbnail generated successfully for ${file.filename}`);
+              resolve();
+            })
+            .on('error', (err: Error) => {
+              this.logger.error(`Failed to generate video thumbnail for ${file.filename}: ${err.message}`);
+              reject(err);
+            });
           command.run();
         });
       }

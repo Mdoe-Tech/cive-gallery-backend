@@ -123,12 +123,11 @@ export class AuthController {
   }
 
   @Patch('profile')
-  @UseGuards(JwtAuthGuard) // This guard attaches req.user
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('avatar', {
     storage: diskStorage({
       destination: './uploads/avatars',
       filename: (req: RequestWithUser, file, cb) => {
-        // Now TypeScript knows req.user might exist and has the User structure
         const userId = req.user?.id || 'unknown-user';
         const uniqueSuffix = Date.now();
         const ext = extname(file.originalname);
@@ -136,14 +135,14 @@ export class AuthController {
         cb(null, filename);
       },
     }),
-    fileFilter: (req, file, cb) => { // req type isn't strictly needed here, but keep consistent if desired
+    fileFilter: (req, file, cb) => {
       if (!file.mimetype.match(/\/(jpg|jpeg|png|gif|webp)$/)) {
         return cb(new BadRequestException('Only image files (JPG, PNG, GIF, WEBP) are allowed!'), false);
       }
       cb(null, true);
     },
     limits: {
-      fileSize: 2 * 1024 * 1024,
+      fileSize: 2 * 1024 * 1024, // 2MB
     },
   }))
   async updateProfile(

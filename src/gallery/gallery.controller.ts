@@ -69,19 +69,73 @@ export class GalleryController {
       }),
       fileFilter: (req, file, cb) => {
         const allowedTypes = [
-          'image/jpeg',
-          'image/png',
-          'image/webp',
-          'image/gif',
-          'video/mp4',
-          'video/quicktime',
+          // Images
+          'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/tiff',
+          'image/bmp', 'image/x-icon', 'image/vnd.microsoft.icon',
+          // Documents
+          'application/pdf', 'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/vnd.oasis.opendocument.text',
+          'application/rtf', 'text/plain', 'text/csv',
+          // Spreadsheets
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.oasis.opendocument.spreadsheet',
+          // Presentations
+          'application/vnd.ms-powerpoint',
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          'application/vnd.oasis.opendocument.presentation',
+          // Archives
+          'application/zip', 'application/x-rar-compressed', 'application/x-7z-compressed',
+          // Audio
+          'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/aac', 'audio/flac',
+          'audio/x-m4a', 'audio/midi', 'audio/x-wav',
+          // Video
+          'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime', 'video/x-msvideo',
+          'video/x-matroska', 'video/x-ms-wmv', 'video/x-flv',
+          // Code/Text
+          'text/html', 'text/css', 'text/javascript', 'application/javascript',
+          'application/json', 'application/xml', 'text/xml',
+          // Other
+          'application/epub+zip', 'application/x-mobipocket-ebook',
+          'application/vnd.android.package-archive', 'application/x-msdownload',
+          'application/x-shockwave-flash', 'application/x-director',
+          'application/x-photoshop', 'application/x-illustrator',
+          'application/x-indesign', 'application/x-quarkxpress',
+          'application/x-font-ttf', 'application/x-font-otf',
+          'application/x-font-woff', 'application/x-font-woff2',
+          'application/x-font-eot', 'application/x-font-sfnt',
+          'application/x-font-type1', 'application/x-font-pcf',
+          'application/x-font-bdf', 'application/x-font-psf',
+          'application/x-font-snf', 'application/x-font-pfa',
+          'application/x-font-pfb', 'application/x-font-afm',
+          'application/x-font-pfm', 'application/x-font-mfm',
+          'application/x-font-sfd', 'application/x-font-ttc',
+          'application/x-font-otc', 'application/x-font-woff2',
+          'application/x-font-woff', 'application/x-font-eot',
+          'application/x-font-sfnt', 'application/x-font-type1',
+          'application/x-font-pcf', 'application/x-font-bdf',
+          'application/x-font-psf', 'application/x-font-snf',
+          'application/x-font-pfa', 'application/x-font-pfb',
+          'application/x-font-afm', 'application/x-font-pfm',
+          'application/x-font-mfm', 'application/x-font-sfd',
+          'application/x-font-ttc', 'application/x-font-otc',
+          'application/x-font-woff2', 'application/x-font-woff',
+          'application/x-font-eot', 'application/x-font-sfnt',
+          'application/x-font-type1', 'application/x-font-pcf',
+          'application/x-font-bdf', 'application/x-font-psf',
+          'application/x-font-snf', 'application/x-font-pfa',
+          'application/x-font-pfb', 'application/x-font-afm',
+          'application/x-font-pfm', 'application/x-font-mfm',
+          'application/x-font-sfd', 'application/x-font-ttc',
+          'application/x-font-otc'
         ];
         if (!allowedTypes.includes(file.mimetype)) {
           return cb(new BadRequestException('Invalid file type'), false);
         }
         cb(null, true);
       },
-      limits: { fileSize: 10 * 1024 * 1024 },
+      limits: { fileSize: 1024 * 1024 * 1024 }, // 1GB
     }),
   )
   async uploadFile(
@@ -115,19 +169,64 @@ export class GalleryController {
       }),
       fileFilter: (req, file, cb) => {
         const allowedTypes = [
-          'image/jpeg',
-          'image/png',
-          'image/webp',
-          'image/gif',
-          'video/mp4',
-          'video/quicktime',
+          // Images
+          'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/tiff',
+          'image/bmp', 'image/x-icon', 'image/vnd.microsoft.icon',
+          // Documents
+          'application/pdf', 'application/msword',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/vnd.oasis.opendocument.text',
+          'application/rtf', 'text/plain', 'text/csv',
+          // Spreadsheets
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.oasis.opendocument.spreadsheet',
+          // Presentations
+          'application/vnd.ms-powerpoint',
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          'application/vnd.oasis.opendocument.presentation',
+          // Archives
+          'application/zip', 'application/x-rar-compressed', 'application/x-7z-compressed',
+          // Audio
+          'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm', 'audio/aac', 'audio/flac',
+          'audio/x-m4a', 'audio/midi', 'audio/x-wav',
+          // Video
+          'video/mp4', 'video/webm', 'video/ogg', 'video/quicktime', 'video/x-msvideo',
+          'video/x-matroska', 'video/x-ms-wmv', 'video/x-flv',
+          // Code/Text
+          'text/html', 'text/css', 'text/javascript', 'application/javascript',
+          'application/json', 'application/xml', 'text/xml',
+          // Other
+          'application/epub+zip', 'application/x-mobipocket-ebook',
+          'application/vnd.android.package-archive', 'application/x-msdownload',
+          'application/x-shockwave-flash', 'application/x-director',
+          'application/x-photoshop', 'application/x-illustrator',
+          'application/x-indesign', 'application/x-quarkxpress',
+          'application/x-font-ttf', 'application/x-font-otf',
+          'application/x-font-woff', 'application/x-font-woff2',
+          'application/x-font-eot', 'application/x-font-sfnt',
+          'application/x-font-type1', 'application/x-font-pcf',
+          'application/x-font-bdf', 'application/x-font-psf',
+          'application/x-font-snf', 'application/x-font-pfa',
+          'application/x-font-pfb', 'application/x-font-afm',
+          'application/x-font-pfm', 'application/x-font-mfm',
+          'application/x-font-sfd', 'application/x-font-ttc',
+          'application/x-font-otc', 'application/x-font-woff2',
+          'application/x-font-woff', 'application/x-font-eot',
+          'application/x-font-sfnt', 'application/x-font-type1',
+          'application/x-font-pcf', 'application/x-font-bdf',
+          'application/x-font-psf', 'application/x-font-snf',
+          'application/x-font-pfa', 'application/x-font-pfb',
+          'application/x-font-afm', 'application/x-font-pfm',
+          'application/x-font-mfm', 'application/x-font-sfd',
+          'application/x-font-ttc', 'application/x-font-otc'
         ];
         if (!allowedTypes.includes(file.mimetype)) {
           return cb(new BadRequestException('Invalid file type'), false);
         }
         cb(null, true);
       },
-      limits: { fileSize: 10 * 1024 * 1024 },
+      limits: { fileSize: 1024 * 1024 * 1024 }, // 1GB
     }),
   )
   async bulkUpload(

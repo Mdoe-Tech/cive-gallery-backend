@@ -122,7 +122,6 @@ export class UpdatesController {
     @UploadedFiles(new ParseFilePipe({
         validators: [
           new MaxFileSizeValidator({ maxSize: MAX_FILE_SIZE_BYTES }),
-          new CustomFileTypeValidator({ allowedTypes: ALLOWED_MIME_TYPES_ARRAY }),
         ],
         fileIsRequired: false, // Files are optional
       }),
@@ -188,29 +187,5 @@ export class UpdatesController {
   ): Promise<PaginatedResponse<Update>> {
     this.logger.log(`REQ [Public] Get approved updates list: ${JSON.stringify(filterDto)}`);
     return this.updatesService.getUpdates(filterDto);
-  }
-
-  @Get(':id')
-  // Publicly accessible single update (Service should handle approval status check if needed for non-admins)
-  getById(
-    @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<Update> {
-    this.logger.log(`REQ [Public] Get update by ID: ${id}`);
-    return this.updatesService.getUpdateById(id);
-  }
-
-  @Get('attachments/:filename')
-  // Publicly accessible download route
-  async downloadAttachment(
-    @Param('filename') filename: string,
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<StreamableFile> {
-    this.logger.log(`REQ [Public] Attachment download: ${filename}`);
-    // Basic security check
-    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
-      this.logger.warn(`Invalid characters in filename detected: ${filename}`);
-      throw new BadRequestException('Invalid filename format.');
-    }
-    return this.updatesService.getAttachmentStream(filename, res);
   }
 }
